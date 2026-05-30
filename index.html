@@ -1265,6 +1265,7 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
 
     <button class="btn btn-accent" onclick="goStep(2)" style="font-size:17px;padding:18px 40px;">Build my free plan →</button>
     <p class="hero-caption">Free to start · <span>Full report $5</span> · No account needed · 60 seconds</p>
+    <p style="margin-top:14px;"><button onclick="showRestoreModal()" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;text-decoration:underline;font-family:'DM Sans',sans-serif;">Already paid? Restore your access →</button></p>
 
     <div class="hero-features">
       <div class="hero-feat"><span class="hero-feat-icon">📊</span> Budget breakdown</div>
@@ -1889,6 +1890,30 @@ input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
   </div>
 </div>
 
+<!-- RESTORE ACCESS MODAL -->
+<div id="restore-modal" style="display:none;position:fixed;inset:0;background:rgba(9,9,11,0.88);backdrop-filter:blur(8px);z-index:9000;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:36px 28px;max-width:400px;width:100%;text-align:center;position:relative;">
+    <button onclick="closeRestoreModal()" style="position:absolute;top:14px;right:16px;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;">✕</button>
+    <div style="font-size:32px;margin-bottom:12px;">🔑</div>
+    <h3 style="font-family:'DM Serif Display',serif;font-size:22px;margin-bottom:8px;">Restore your access</h3>
+    <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:20px;">Enter the email you used at checkout and we'll restore your full report access on this device.</p>
+    <input id="restore-email-input" type="email" class="form-input" placeholder="your@email.com" style="margin-bottom:10px;" onkeydown="if(event.key==='Enter')restoreAccess()">
+    <button onclick="restoreAccess()" class="btn btn-accent" style="width:100%;justify-content:center;font-size:15px;padding:14px;">Restore Access →</button>
+    <div id="restore-msg" style="font-size:13px;margin-top:12px;min-height:18px;"></div>
+  </div>
+</div>
+
+<!-- POST-PAYMENT EMAIL SAVE BANNER -->
+<div id="paid-banner" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:7500;background:rgba(9,9,11,0.95);border:1px solid rgba(200,240,96,0.3);border-radius:14px;padding:18px 24px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,0.6);">
+  <div style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:4px;">🎉 Premium access unlocked!</div>
+  <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">Save your access so you can restore it on any device.</p>
+  <div style="display:flex;gap:8px;">
+    <input id="save-email-input" type="email" class="form-input" placeholder="your@email.com" style="flex:1;font-size:13px;padding:10px 14px;">
+    <button onclick="saveEmailForAccess()" class="btn btn-accent" style="padding:10px 16px;font-size:13px;white-space:nowrap;">Save</button>
+  </div>
+  <button onclick="document.getElementById('paid-banner').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;margin-top:10px;">Dismiss</button>
+</div>
+
 </div><!-- #app -->
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -2187,8 +2212,9 @@ function checkUrlParams() {
   if (p.get('access') === UNLOCK_TOKEN) {
     state.isPaid = true;
     localStorage.setItem('mb_paid', UNLOCK_TOKEN);
-    // Clean the token from the URL bar
     window.history.replaceState({}, '', window.location.pathname);
+    // Prompt user to save their email for cross-device access
+    setTimeout(maybeShowPaidBanner, 800);
   }
   if (localStorage.getItem('mb_paid') === UNLOCK_TOKEN) {
     state.isPaid = true;
@@ -3517,6 +3543,79 @@ function timeAgo(ts) {
   const h = Math.floor(m / 60);
   if (h < 24) return h + 'h ago';
   return Math.floor(h / 24) + 'd ago';
+}
+
+// ═══════════════════════════════════════
+// RESTORE ACCESS / EMAIL SAVE
+// ═══════════════════════════════════════
+function showRestoreModal() {
+  const m = document.getElementById('restore-modal');
+  m.style.display = 'flex';
+}
+function closeRestoreModal() {
+  document.getElementById('restore-modal').style.display = 'none';
+  document.getElementById('restore-msg').textContent = '';
+}
+
+async function restoreAccess() {
+  const email = document.getElementById('restore-email-input').value.trim();
+  const msg = document.getElementById('restore-msg');
+  if (!email || !email.includes('@')) {
+    msg.style.color = 'var(--error)';
+    msg.textContent = 'Please enter a valid email address.';
+    return;
+  }
+  msg.style.color = 'var(--muted)';
+  msg.textContent = 'Checking...';
+
+  try {
+    const res = await fetch('/.netlify/functions/verify-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json();
+
+    if (data.hasAccess) {
+      localStorage.setItem('mb_paid', UNLOCK_TOKEN);
+      localStorage.setItem('mb_email', email);
+      state.isPaid = true;
+      msg.style.color = 'var(--accent)';
+      msg.textContent = '✓ Access restored! Taking you to the form...';
+      setTimeout(() => { closeRestoreModal(); goStep(2); }, 1200);
+    } else {
+      msg.style.color = 'var(--error)';
+      msg.textContent = 'No purchase found for this email. Double-check your email or contact support.';
+    }
+  } catch (e) {
+    msg.style.color = 'var(--error)';
+    msg.textContent = 'Connection error. Please try again.';
+  }
+}
+
+async function saveEmailForAccess() {
+  const email = document.getElementById('save-email-input').value.trim();
+  if (!email || !email.includes('@')) return;
+
+  // Optimistically save and dismiss
+  localStorage.setItem('mb_email', email);
+  document.getElementById('paid-banner').style.display = 'none';
+
+  // Verify with backend (fire and forget)
+  fetch('/.netlify/functions/verify-access', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email })
+  }).catch(() => {});
+}
+
+function maybeShowPaidBanner() {
+  const alreadySaved = localStorage.getItem('mb_email');
+  if (state.isPaid && !alreadySaved) {
+    setTimeout(() => {
+      document.getElementById('paid-banner').style.display = 'block';
+    }, 1500);
+  }
 }
 
 // ═══════════════════════════════════════
